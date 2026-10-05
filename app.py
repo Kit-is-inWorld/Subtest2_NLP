@@ -23,35 +23,41 @@ if not groq_api_key:
 # สร้าง Client
 client = Groq(api_key=groq_api_key)
 
-# ฟังก์ชัน Auto-Detect ค้นหาโมเดลที่ใช้งานได้จริงในบัญชีนี้
+# ฟังก์ชัน Auto-Detect เฉพาะ Chat Model ที่ใช้งานได้จริง
 @st.cache_resource
 def get_available_model():
     try:
         models_page = client.models.list()
-        active_models = [m.id for m in models_page.data]
+        # ดึงเฉพาะโมเดลที่เป็น Chat Model และไม่ใช่ Guard/Whisper/Embedding
+        active_chat_models = [
+            m.id for m in models_page.data 
+            if not any(x in m.id.lower() for x in ["guard", "whisper", "embed", "vision"])
+        ]
         
-        # ลำดับโมเดลที่ต้องการเลือกใช้งาน (Priority List)
+        # รายชื่อ Chat Models ยอดนิยมเรียงตามลำดับความต้องการ
         preferences = [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "llama3-70b-8192",
+            "llama3-8b-8192",
             "gemma2-9b-it",
-            "mixtral-8x7b-32768"
+            "mixtral-8x7b-32768",
+            "deepseek-r1-distill-llama-70b",
+            "qwen-2.5-32b"
         ]
         
-        # เลือกโมเดลตัวแรกที่พบในบัญชี
+        # 1. เช็กตาม Priority List ก่อน
         for model in preferences:
-            if model in active_models:
+            if model in active_chat_models:
                 return model
                 
-        # หากไม่ตรงกับรายการโปรด ให้ใช้โมเดลแรกสุดที่มีในบัญชี
-        if active_models:
-            return active_models[0]
+        # 2. ถ้าไม่ตรงเลย ให้เอา Chat Model ตัวแรกที่พบ
+        if active_chat_models:
+            return active_chat_models[0]
             
     except Exception as e:
         pass
     
-    # ค่าเริ่มต้นสำรอง
+    # สำรองกรณีดึงรายการไม่สำเร็จ
     return "llama-3.1-8b-instant"
 
 AVAILABLE_MODEL = get_available_model()
