@@ -18,6 +18,7 @@ groq_api_key = st.secrets.get("GROQ_API_KEY")
 if not groq_api_key:
     st.error("❌ ไม่พบ GROQ_API_KEY ใน Secrets กรุณาตั้งค่าใน Streamlit Cloud Secrets ก่อนใช้งาน")
     st.stop()
+groq_api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
 client = Groq(api_key=groq_api_key)
 
