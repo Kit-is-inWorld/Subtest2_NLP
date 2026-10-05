@@ -23,36 +23,39 @@ if not groq_api_key:
 # สร้าง Client
 client = Groq(api_key=groq_api_key)
 
-# ฟังก์ชัน Auto-Detect เฉพาะ Chat Model ที่ใช้งานได้จริง
-@st.cache_resource
-def get_available_model():
+# ฟังก์ชันดึง Candidate Models ที่เป็น Chat Model เท่านั้น (ไม่ใช้ Cache เพื่อให้ข้อมูลสดใหม่ตลอด)
+def get_candidate_models():
     try:
         models_page = client.models.list()
         active_models = [m.id for m in models_page.data]
         
-        # รายชื่อโมเดลที่ฉลาดและเข้าใจภาษาไทยดีที่สุดใน Groq
-        preferred_models = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "gemma2-9b-it"
+        # กรองเอาเฉพาะ Chat Model ไม่เอา Guard/Whisper/Vision
+        chat_models = [
+            m for m in active_models 
+            if not any(x in m.lower() for x in ["guard", "whisper", "embed", "vision"])
         ]
         
-        for m in preferred_models:
-            if m in active_models:
-                return m
-                
-        # หากไม่มี ให้เลือกรุ่น Llama หรือ Gemma ตัวใดก็ได้ที่มี
-        for m in active_models:
-            if ("llama-3" in m.lower() or "gemma" in m.lower()) and "guard" not in m.lower():
-                return m
-    except Exception:
-        pass
+        # รายชื่อโมเดลคุณภาพสูงเรียงตามลำดับความต้องการ
+        preferred = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "gemma2-9b-it",
+            "llama3-70b-8192",
+            "mixtral-8x7b-32768",
+            "qwen-2.5-32b"
+        ]
         
-    return "llama-3.1-8b-instant"
+        ordered_models = [m for m in preferred if m in chat_models]
+        # ใส่โมเดลที่เหลือต่อท้ายไว้กันพลาด
+        for m in chat_models:
+            if m not in ordered_models:
+                ordered_models.append(m)
+                
+        return ordered_models if ordered_models else ["llama-3.3-70b-versatile"]
+    except Exception:
+        return ["llama-3.3-70b-versatile", "gemma2-9b-it"]
 
-AVAILABLE_MODEL = get_available_model()
-
-# 3. โหลดและสร้าง Vector Database (ใช้ Cache เพื่อความรวดเร็ว)
+# 3. โหลดและสร้าง Vector Database (ใช้ Cache เฉพาะส่วน Document Loading & Embedding)
 @st.cache_resource
 def load_vector_database():
     file_paths = glob.glob("data/*.txt")
@@ -65,7 +68,7 @@ def load_vector_database():
         loader = TextLoader(path, encoding="utf-8")
         documents.extend(loader.load())
 
-    # Chunking เอกสาร
+    # Chunking เอกสาร (ปรับขนาด 1000 เพื่อความครอบคลุมของเนื้อหา)
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
@@ -87,7 +90,7 @@ with st.spinner("⏳ กำลังเตรียมคลังข้อม�
 # 4. ระบบจัดการ Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": f"สวัสดีครับ มีข้อสงสัยเกี่ยวกับระเบียบการศึกษา การลงทะเบียน หรือเกณฑ์การวัดผล สอบถามได้เลยครับ! (กำลังใช้งานโมเดล: `{AVAILABLE_MODEL}`)"}
+        {"role": "assistant", "content": "สวัสดีครับ มีข้อสงสัยเกี่ยวกับระเบียบการศึกษา การลงทะเบียน หรือเกณฑ์การวัดผล สอบถามได้เลยครับ!"}
     ]
 
 for message in st.session_state.messages:
@@ -100,7 +103,7 @@ if prompt := st.chat_input("พิมพ์คำถามของคุณท�
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # ดึง Context มาเพิ่มเป็น 4 ชิ้น
+    # ค้นหา Chunk ที่เกี่ยวข้องที่สุด 4 อัน
     relevant_docs = vector_store.similarity_search(prompt, k=4)
     
     context_text = "\n\n".join([
@@ -108,7 +111,7 @@ if prompt := st.chat_input("พิมพ์คำถามของคุณท�
         for doc in relevant_docs
     ])
 
-    # System Prompt ที่ออกแบบมาเพื่อการสรุปและเชื่อมโยงข้อมูล RAG ภาษาไทยโดยเฉพาะ
+    # System Prompt ที่ออกแบบเพื่อการประมวลผล RAG ภาษาไทย
     system_prompt = f"""คุณคือผู้ช่วยตอบคำถามอัจฉริยะเกี่ยวกับระเบียบและข้อบังคับนักศึกษา 
 หน้าที่ของคุณคืออ่าน วิเคราะห์ และสรุปคำตอบจากข้อมูล "Context" ที่กำหนดให้ด้านล่างนี้เท่านั้น
 
@@ -125,20 +128,32 @@ Context สำหรับใช้ตอบคำถาม:
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         
-        try:
-            # เรียกใช้ API ด้วยโมเดลที่ Auto Detect ได้
-            completion = client.chat.completions.create(
-                model=AVAILABLE_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1
-            )
-            answer = completion.choices[0].message.content
+        # ระบบสลับโมเดลอัตโนมัติหากพบโมเดลพังหรือถูกถอดถอน
+        candidate_models = get_candidate_models()
+        answer = None
+        used_model = None
+        last_error = None
 
+        for model_name in candidate_models:
+            try:
+                completion = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1
+                )
+                answer = completion.choices[0].message.content
+                used_model = model_name
+                break # หากสำเร็จ ให้หลุดออกจาก loop ทันที
+            except Exception as e:
+                last_error = e
+                continue # หากโมเดลนี้ใช้ไม่ได้ ให้ข้ามไปลองโมเดลถัดไป
+
+        if answer:
             # ปรับแต่งคำตอบพร้อมแสดง Reference
-            full_response = f"{answer}\n\n---\n**📚 แหล่งข้อมูลอ้างอิงที่ค้นพบ:**\n"
+            full_response = f"{answer}\n\n---\n*(ประมวลผลด้วยโมเดล: `{used_model}`)*\n\n**📚 แหล่งข้อมูลอ้างอิงที่ค้นพบ:**\n"
             for i, doc in enumerate(relevant_docs, 1):
                 file_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
                 snippet = doc.page_content.replace("\n", " ")[:120]
@@ -146,6 +161,5 @@ Context สำหรับใช้ตอบคำถาม:
 
             response_placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการเรียกใช้ AI API ({AVAILABLE_MODEL}): {str(e)}")
+        else:
+            st.error(f"เกิดข้อผิดพลาดในการเรียกใช้ AI API ทุกโมเดล: {str(last_error)}")
