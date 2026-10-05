@@ -23,6 +23,39 @@ if not groq_api_key:
 # สร้าง Client
 client = Groq(api_key=groq_api_key)
 
+# ฟังก์ชัน Auto-Detect ค้นหาโมเดลที่ใช้งานได้จริงในบัญชีนี้
+@st.cache_resource
+def get_available_model():
+    try:
+        models_page = client.models.list()
+        active_models = [m.id for m in models_page.data]
+        
+        # ลำดับโมเดลที่ต้องการเลือกใช้งาน (Priority List)
+        preferences = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama3-70b-8192",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768"
+        ]
+        
+        # เลือกโมเดลตัวแรกที่พบในบัญชี
+        for model in preferences:
+            if model in active_models:
+                return model
+                
+        # หากไม่ตรงกับรายการโปรด ให้ใช้โมเดลแรกสุดที่มีในบัญชี
+        if active_models:
+            return active_models[0]
+            
+    except Exception as e:
+        pass
+    
+    # ค่าเริ่มต้นสำรอง
+    return "llama-3.1-8b-instant"
+
+AVAILABLE_MODEL = get_available_model()
+
 # 3. โหลดและสร้าง Vector Database (ใช้ Cache เพื่อความรวดเร็ว)
 @st.cache_resource
 def load_vector_database():
@@ -58,7 +91,7 @@ with st.spinner("⏳ กำลังเตรียมคลังข้อม�
 # 4. ระบบจัดการ Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "สวัสดีครับ มีข้อสงสัยเกี่ยวกับระเบียบการศึกษา การลงทะเบียน หรือเกณฑ์การวัดผล สอบถามได้เลยครับ!"}
+        {"role": "assistant", "content": f"สวัสดีครับ มีข้อสงสัยเกี่ยวกับระเบียบการศึกษา การลงทะเบียน หรือเกณฑ์การวัดผล สอบถามได้เลยครับ! (กำลังใช้งานโมเดล: `{AVAILABLE_MODEL}`)"}
     ]
 
 for message in st.session_state.messages:
@@ -95,9 +128,9 @@ Context:
         response_placeholder = st.empty()
         
         try:
-            # เปลี่ยนชื่อโมเดลเป็น llama-3.1-8b-instant
+            # เรียกใช้ API ด้วยโมเดลที่ Auto Detect ได้
             completion = client.chat.completions.create(
-                model="gemma2-9b-it",
+                model=AVAILABLE_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -117,4 +150,4 @@ Context:
             st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการเรียกใช้ AI API: {str(e)}")
+            st.error(f"เกิดข้อผิดพลาดในการเรียกใช้ AI API ({AVAILABLE_MODEL}): {str(e)}")
