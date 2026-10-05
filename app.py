@@ -97,7 +97,7 @@ Context:
         try:
             # เปลี่ยนชื่อโมเดลเป็น llama-3.1-8b-instant
             completion = client.chat.completions.create(
-                model="llama3-70b-8192",
+                model="mixtral-8x7b-32768",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
