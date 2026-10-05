@@ -28,36 +28,26 @@ client = Groq(api_key=groq_api_key)
 def get_available_model():
     try:
         models_page = client.models.list()
-        # ดึงเฉพาะโมเดลที่เป็น Chat Model และไม่ใช่ Guard/Whisper/Embedding
-        active_chat_models = [
-            m.id for m in models_page.data 
-            if not any(x in m.id.lower() for x in ["guard", "whisper", "embed", "vision"])
-        ]
+        active_models = [m.id for m in models_page.data]
         
-        # รายชื่อ Chat Models ยอดนิยมเรียงตามลำดับความต้องการ
-        preferences = [
+        # รายชื่อโมเดลที่ฉลาดและเข้าใจภาษาไทยดีที่สุดใน Groq
+        preferred_models = [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "llama3-8b-8192",
-            "gemma2-9b-it",
-            "mixtral-8x7b-32768",
-            "deepseek-r1-distill-llama-70b",
-            "qwen-2.5-32b"
+            "gemma2-9b-it"
         ]
         
-        # 1. เช็กตาม Priority List ก่อน
-        for model in preferences:
-            if model in active_chat_models:
-                return model
+        for m in preferred_models:
+            if m in active_models:
+                return m
                 
-        # 2. ถ้าไม่ตรงเลย ให้เอา Chat Model ตัวแรกที่พบ
-        if active_chat_models:
-            return active_chat_models[0]
-            
-    except Exception as e:
+        # หากไม่มี ให้เลือกรุ่น Llama หรือ Gemma ตัวใดก็ได้ที่มี
+        for m in active_models:
+            if ("llama-3" in m.lower() or "gemma" in m.lower()) and "guard" not in m.lower():
+                return m
+    except Exception:
         pass
-    
-    # สำรองกรณีดึงรายการไม่สำเร็จ
+        
     return "llama-3.1-8b-instant"
 
 AVAILABLE_MODEL = get_available_model()
@@ -77,8 +67,8 @@ def load_vector_database():
 
     # Chunking เอกสาร
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,
-        chunk_overlap=100
+        chunk_size=1000,
+        chunk_overlap=200
     )
     chunks = text_splitter.split_documents(documents)
 
@@ -110,23 +100,25 @@ if prompt := st.chat_input("พิมพ์คำถามของคุณท�
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # ค้นหา Chunk ที่เกี่ยวข้องที่สุด 3 อัน
-    relevant_docs = vector_store.similarity_search(prompt, k=3)
+    # ดึง Context มาเพิ่มเป็น 4 ชิ้น
+    relevant_docs = vector_store.similarity_search(prompt, k=4)
     
     context_text = "\n\n".join([
         f"[เอกสารอ้างอิง: {os.path.basename(doc.metadata.get('source', 'Unknown'))}]\n{doc.page_content}" 
         for doc in relevant_docs
     ])
 
-    # System Prompt สำหรับบังคับให้ตอบเฉพาะใน Context
-    system_prompt = f"""คุณคือผู้ช่วยตอบคำถามอัจฉริยะเกี่ยวกับระเบียบและข้อบังคับนักศึกษา ตอบคำถามโดยใช้ข้อมูลจาก Context ที่กำหนดให้เท่านั้น 
+    # System Prompt ที่ออกแบบมาเพื่อการสรุปและเชื่อมโยงข้อมูล RAG ภาษาไทยโดยเฉพาะ
+    system_prompt = f"""คุณคือผู้ช่วยตอบคำถามอัจฉริยะเกี่ยวกับระเบียบและข้อบังคับนักศึกษา 
+หน้าที่ของคุณคืออ่าน วิเคราะห์ และสรุปคำตอบจากข้อมูล "Context" ที่กำหนดให้ด้านล่างนี้เท่านั้น
 
-เงื่อนไขการตอบ:
-1. ให้ตอบเฉพาะข้อมูลที่มีอยู่ใน Context เท่านั้น
-2. หากใน Context ไม่มีข้อมูลที่สามารถตอบคำถามได้ ให้ตอบว่า "ไม่พบข้อมูลในระบบ" ห้ามคาดเดาหรือคิดคำตอบเองเด็ดขาด
-3. ตอบด้วยภาษาไทยที่สุภาพ เรียบร้อย และเข้าใจง่าย
+คำสั่งในการตอบคำถาม:
+1. วิเคราะห์ Context ทั้งหมด แล้วนำข้อมูลที่เกี่ยวข้องมาสังเคราะห์เป็นคำตอบที่ชัดเจน ตรงประเด็น และเข้าใจง่าย
+2. หากมีข้อมูลเงื่อนไข ตัวเลข เกรดเฉลี่ย (GPAX) หรือขั้นตอน ให้ระบุให้ครบถ้วนถูกต้องตาม Context
+3. ห้ามใช้ความรู้ภายนอกหรือคิดคำตอบขึ้นมาเองเด็ดขาด ให้ใช้เฉพาะข้อมูลที่ปรากฏใน Context เท่านั้น
+4. หากใน Context ไม่มีข้อมูลที่เกี่ยวข้องกับคำถามเลย ให้ตอบเพียงว่า "ไม่พบข้อมูลในระบบ" เท่านั้น
 
-Context:
+Context สำหรับใช้ตอบคำถาม:
 {context_text}
 """
 
