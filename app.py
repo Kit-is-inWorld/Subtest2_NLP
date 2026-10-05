@@ -14,12 +14,13 @@ st.title("🎓 ผู้ช่วยตอบคำถามระเบีย�
 st.caption("ระบบตอบคำถามอัตโนมัติจากคลังเอกสารระเบียบการศึกษาด้วยเทคนิค RAG")
 
 # 2. อ่านค่า API Key จาก Streamlit Secrets
-groq_api_key = st.secrets.get("GROQ_API_KEY")
+groq_api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
 if not groq_api_key:
     st.error("❌ ไม่พบ GROQ_API_KEY ใน Secrets กรุณาตั้งค่าใน Streamlit Cloud Secrets ก่อนใช้งาน")
     st.stop()
-groq_api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
+# สร้าง Client
 client = Groq(api_key=groq_api_key)
 
 # 3. โหลดและสร้าง Vector Database (ใช้ Cache เพื่อความรวดเร็ว)
@@ -95,7 +96,7 @@ Context:
         
         try:
             completion = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
